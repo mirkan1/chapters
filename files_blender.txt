@@ -1,0 +1,392 @@
+# functions that work on blender
+
+import bpy
+import time
+from mathutils import *
+from math import sqrt, floor
+import re
+import os
+
+filepath = bpy.data.filepath
+blendfile = os.path.dirname(filepath) + '//'
+lib_path = os.path.dirname(filepath) + '//'
+print(blendfile)
+
+# Clear the scene from old objects
+def clear_scene():
+    objs = bpy.data.objects
+    for rem in objs:
+        objs.remove(rem, do_unlink=True)
+
+scene = bpy.context.scene
+total_frame = 300
+bpy.context.scene.frame_end = total_frame
+
+# Utility function, returns a quaternion looking at the forward param
+# Do not use explicitly unless you know what are you doing
+def look_rotation(forward, up):
+    # forward = Vector((15.0, 0.0, 0.0))
+    # up = 0, 0, 1
+    forward = Vector(forward)
+    up = Vector(up)
+    forward.normalize()
+    vector = forward.copy()
+    vector2 = up.cross(vector)
+    vector2.normalize()
+    vector3 = vector.cross(vector2)
+    m00 = vector2[0]
+    m01 = vector2[1]
+    m02 = vector2[2]
+    m10 = vector3[0]
+    m11 = vector3[1]
+    m12 = vector3[2]
+    m20 = vector[0]
+    m21 = vector[1]
+    m22 = vector[2]
+    num8 = (m00 + m11) + m22
+    quaternion = Quaternion((0,0,0,0))
+    if num8 > 0:
+        num = sqrt(num8 + 1)
+        quaternion[3] = num * 0.5
+        num = 0.5 / num
+        quaternion[0] = (m12 - m21) * num;
+        quaternion[1] = (m20 - m02) * num;
+        quaternion[2] = (m01 - m10) * num;
+        return quaternion
+    if (m00 >= m11) and (m00 >= m22):
+        num7 = sqrt(((1 + m00) - m11) - m22)
+        num4 = 0.5 / num7
+        quaternion[0] = 0.5 * num7
+        quaternion[1] = (m01 + m10) * num4
+        quaternion[2] = (m02 + m20) * num4
+        quaternion[3] = (m12 - m21) * num4
+        return quaternion
+    if m11 > m22:
+        num6 = sqrt(((1 + m11) - m00) - m22)
+        num3 = 0.5 / num6
+        quaternion[0] = (m10+ m01) * num3
+        quaternion[1] = 0.5 * num6
+        quaternion[2] = (m21 + m12) * num3
+        quaternion[3] = (m20 - m02) * num3
+        return quaternion
+    num5 = sqrt(((1 + m22) - m00) - m11)
+    num2 = 0.5 / num5
+    quaternion.x = (m20 + m02) * num2
+    quaternion.y = (m21 + m12) * num2
+    quaternion.z = 0.5 * num5
+    quaternion.w = (m01 - m10) * num2
+    return quaternion
+
+
+# Appends the animation with given name from blend file
+def load_animation(blendfile, anim):
+    filepath  = blendfile + "\\Action\\" + anim
+    directory = blendfile + "\\Action\\"
+    filename  = anim
+    bpy.ops.wm.append(filepath=filepath, filename=filename , directory=directory)
+
+# Imports the .fbx object with the given name from lib_path directory
+def import_object(object):
+    filepath = lib_path + object
+    directory = lib_path
+    bpy.ops.import_scene.fbx(filepath=filepath, directory=directory)
+
+# Sets the location of the object with given name
+def set_location(object, location):
+    obj = scene.objects[object]
+    obj.location = location
+    
+# Sets the rotation of the object with given name
+def set_rotation(object, rotation):
+    obj = scene.objects[object]
+    obj.rotation_euler = rotation
+
+# Creates a camera
+# Name, location and rotation can be set or left as defaults
+def init_camera(name = "MainCamera", location = (0,0,0), rotation = (0,0,0)):
+    cam = bpy.data.cameras.new(name)
+    cam_obj = bpy.data.objects.new(name, cam)
+    cam_obj.location = location
+    #convert rotation to radians
+    pi=22/7    
+    rotation = (rotation[0]*(pi/180), rotation[1]*(pi/180), rotation[2]*(pi/180))
+    cam_obj.rotation_mode = 'XYZ'
+    cam_obj.rotation_euler = rotation
+    scene.collection.objects.link(cam_obj)
+
+# Moves the object with given name from start_pos to end_pos
+# Between frames start_frame, end_frame
+# If look is True, object faces to move direction
+def move(object, start_frame, end_frame, start_pos, end_pos, look=False, first_move=False):
+    #move("gregg", 1, 100, (-10, 1, 0), (5, 1, 0), True, True)
+    obj = scene.objects[object]
+    scene.frame_set(start_frame)
+    if first_move:
+        obj.location = start_pos
+    obj.keyframe_insert(data_path = "location", index=-1)
+    if look:
+        direction = Vector(end_pos) - Vector(start_pos)
+        obj.rotation_mode = 'QUATERNION'
+        # gregg Quaternion((0.1, 0, 0, 0.1))
+        print(object)
+        if object == "gregg":
+            obj.rotation_quaternion = Quaternion((0.1, 0, 0, 0.1))
+        else:
+            obj.rotation_quaternion = look_rotation(direction, (0, 0, 1))
+        obj.keyframe_insert(data_path = "rotation_quaternion", index=-1)
+    scene.frame_set(end_frame)
+    obj.location = end_pos
+    obj.keyframe_insert(data_path = "location", index=-1)
+    if look:
+        obj.rotation_mode = 'QUATERNION'
+        obj.keyframe_insert(data_path = "rotation_quaternion", index=-1)
+
+# Adds the animation with given name to the object with given name
+# start_frame and end_frame sets the animation duration
+# if look is True, animation will be repeated to fill the duration
+def add_animation(object, anim, start_frame, end_frame, loop = False):
+    scene = bpy.context.scene
+    obj = scene.objects[object]
+    #remove default action
+    if obj.animation_data.action is not None:
+        bpy.data.actions.remove(obj.animation_data.action)
+    track = ()
+    #print("FRMAEERROR", start_frame, end_frame)
+    try:
+        track = obj.animation_data.nla_tracks[0]
+    except:
+        track = obj.animation_data.nla_tracks.new()
+    
+    strip = track.strips.new(anim, start_frame, bpy.data.actions[anim])
+    strip.frame_start = start_frame
+    if loop:
+        strip.repeat = (end_frame - start_frame) / (strip.action.frame_range[1] - strip.action.frame_range[0])
+
+# Displays the given text in given location
+# if look_at is set, text will be facing to the given location
+def add_speech(location, speech, size = 1, start_frame = 0, end_frame = 0, look_at = None):
+    font_curve = bpy.data.curves.new(type="FONT",name="Font Curve")
+    font_curve.body = speech
+    font_curve.size = size
+    font_obj = bpy.data.objects.new("Font Object", font_curve)
+    bpy.context.scene.collection.objects.link(font_obj)
+    ###
+    scene.frame_set(0)
+    font_obj.hide_viewport = True
+    font_obj.keyframe_insert(data_path="hide_viewport")
+    scene.frame_set(start_frame)
+    font_obj.hide_viewport = False
+    font_obj.keyframe_insert(data_path="hide_viewport")
+    scene.frame_set(end_frame)
+    font_obj.hide_viewport = True
+    font_obj.keyframe_insert(data_path="hide_viewport")
+    scene.frame_set(start_frame)
+    ###
+    scene.frame_set(0)
+    font_obj.hide_render = True
+    font_obj.keyframe_insert(data_path="hide_render")
+    scene.frame_set(start_frame)
+    font_obj.hide_render = False
+    font_obj.keyframe_insert(data_path="hide_render")
+    scene.frame_set(end_frame)
+    font_obj.hide_render = True
+    font_obj.keyframe_insert(data_path="hide_render")
+    scene.frame_set(start_frame)
+    ###
+    font_obj.location = location
+    if look_at is not None:
+        direction = Vector(look_at) - Vector(location)
+        font_obj.rotation_mode = 'QUATERNION'
+        font_obj.rotation_quaternion = look_rotation(direction, (0, 0, 1))
+
+
+
+def main():
+    walk = {"jasper": "Walk", "gregg": "gregg_walk_anim"}
+    talk = {"jasper": "Talk", "gregg": "gregg_anim_copy"}
+    includes = []
+    '''
+        @ is Character movement spesification, then coming the movement function:
+        >>> @HAZEL stands screen left
+        "        " aka 8 spaces are reaction functions 1 paramater is required 1 paramater is optional; Character and the reaction:
+        >>>        HAZEL (talk_think_neutral)
+        "    " aka 4 spaces are the textbox coming after 8 spaces; only lines of string is required:
+        >>>    How do you think I should feel next?
+        choice is decisions; requires at least 2 parameters; 2 text boxes
+        choice
+        "I'm happy" {
+
+                HAZEL (talk_excited_happy)
+            I just made a choice.
+
+                HAZEL (laugh_crackup)
+            Hahaha! I'm SO happy!
+
+        }
+        "I'm Sad" {
+
+                HAZEL (talk_sad)
+            I just made a choice.
+
+                HAZEL (talk_armraised_sad)
+            I'm so sad!
+
+        }
+    '''
+    file = open(lib_path + "info.txt", "r")
+    file = file.readlines()
+    line_ct = 1
+    functions = { "walk":[], "talk":[] }
+    scene.frame_end = len(file) * 100
+    frame_current = 1
+    print("Total frame is", scene.frame_end)
+    for f in file:
+        print("Current frame is", scene.frame_current)
+        if f == '\n':
+            #scene.frame_current = scene.frame_current - 30
+            print(line_ct, "=>", "next line")
+            while len(includes) > 0:
+                f_name = includes.pop()
+                if f_name == "jasper":
+                    load_animation(blendfile + "library.blend", "Walk")
+                    load_animation(blendfile + "library.blend", "Talk")
+                elif f_name == "gregg":
+                    load_animation(blendfile + "gregg_walk_anim.blend", anim = "gregg_walk_anim")
+                    load_animation(blendfile + "gregg_anim_copy.blend", anim = "gregg_anim_copy") # talking
+        if f.startswith("include"):
+            f_name = f.split("include")[1].strip().lower()
+            f = f_name + ".fbx"
+            import_object(f)
+            ob = bpy.context.selected_objects[0] # last imported object
+            ob.name = f_name
+            includes.append(f_name)
+            # DELETES ALL KEYFRAMES AND ACTIONS
+            for a in bpy.data.actions: bpy.data.actions.remove(a)
+        # @
+        elif f.startswith("@"): # CATCHES MOVEMENTS
+            obj_name = f.split(" ")[0].split("@")[1].lower()
+            print("@ => ", f)
+            if len(re.findall("left", f)) > 0:
+                left_start_vec = (0, -5, 0)
+                left_end_vec = (0, 0, 0)
+                add_animation(obj_name, walk[obj_name], scene.frame_current, scene.frame_current + 120)
+                functions["walk"].append([obj_name, scene.frame_current, scene.frame_current + 120, (-10, -1, 0), (5, -1, 0), True, True])
+            elif len(re.findall("right", f)) > 0:
+                right_start_vec = (0, 5, 0)
+                right_end_vec = (0, 0, 0)
+                add_animation(obj_name, walk[obj_name], scene.frame_current, scene.frame_current + 120)
+                functions["walk"].append([obj_name, scene.frame_current, scene.frame_current + 120, (-10, 1, 0), (5, 1, 0), True, True])
+            elif len(re.findall("turn", f)) > 0:
+                print(line_ct, "turn") 
+                head = len(re.findall("head", f))
+                face = len(re.findall("face", f))
+                if head + face > 0:
+                    # SKULL WILL BE TURNED
+                    if len(re.findall("left", f)) > 0:
+                        print("left")
+                        print(line_ct, "character catched turning left")
+                        deg = 90
+                        # TURN HEAD TO LEFT
+                        # self.turnHead("STR-Head", deg, self.frame)
+                    elif len(re.findall("right", f)) > 0:
+                        print(line_ct, "character catched turning right")
+                        deg = -90
+                        # TURN HEAD TO RIGHT
+                        # self.turnHead("STR-Head", deg, self.frame)
+                    else:
+                        print(line_ct, "character catched turning to normal")
+                        deg = 0
+                        # NATURALISING FUNCTION
+                        # self.turnHead("STR-Head", deg, self.frame)
+            elif len(re.findall("sad", f)) > 0:
+                pass
+                # MAKE SAD
+                # self.smileORnot(self.leftLip, "RIG-hail",  self.sad, self.frame)
+                # self.smileORnot(self.rightLip, "RIG-hail", self.sad, self.frame)
+                
+                # LEFT EYE
+                # self.smileORnot(self.leftTopEyelid, "RIG-hail",  -0.004003, self.frame)
+                # self.smileORnot(self.leftButtomEyelid, "RIG-hail", self.sad, self.frame)			
+                
+                # RIGHT EYE
+                # self.smileORnot(self.rightTopEyelid, "RIG-hail",  -0.004003, self.frame)
+                # self.smileORnot(self.rightButtomEyelid, "RIG-hail", self.sad, self.frame)
+            elif len(re.findall("happy", f)) > 0:
+                pass
+                # MAKE HAPPY
+                # self.smileORnot(self.leftLip, "RIG-hail", self.happy, self.frame)
+                # self.smileORnot(self.rightLip, "RIG-hail", self.happy, self.frame)
+                
+                #LEFT EYE
+                # self.smileORnot(self.leftTopEyelid, "RIG-hail",  -0.004003, self.frame)
+                # self.smileORnot(self.leftButtomEyelid, "RIG-hail", 0.007383, self.frame)
+                
+                #RIGHT EYE
+                # self.smileORnot(self.rightTopEyelid, "RIG-hail",  -0.004003, self.frame)
+                # self.smileORnot(self.rightButtomEyelid, "RIG-hail", 0.007383, self.frame)
+            elif len(re.findall("natural", f)) > 0:
+                pass
+                # MAKE NATURAL
+                # self.smileORnot(self.leftLip, "RIG-hail", self.natural, self.frame)
+                # self.smileORnot(self.rightLip, "RIG-hail", self.natural, self.frame)
+                
+                # LEFT EYE
+                # self.smileORnot(self.leftTopEyelid, "RIG-hail",  self.natural, self.frame)
+                # self.smileORnot(self.leftButtomEyelid, "RIG-hail", self.natural, self.frame)
+                
+                # RIGHT EYE
+                # self.smileORnot(self.rightTopEyelid, "RIG-hail",  self.natural, self.frame)
+                # self.smileORnot(self.rightButtomEyelid, "RIG-hail", self.natural, self.frame)
+            scene.frame_current = scene.frame_current + 220
+        elif f.startswith("        "):
+            obj_name = f.split(" ")[-2].lower()
+            print(line_ct, "spaces(8) catched / reaction functions")
+            if len(re.findall("(talk_normal)", f)) > 0:
+                add_animation(obj_name, talk[obj_name], scene.frame_current, scene.frame_current + 120)
+            elif len(re.findall("walk", f)) > 0:
+                pass
+        elif f.startswith("    "):
+            print(line_ct, "spaces(4) catched / textbox")
+            line = f.split(" ")
+            if len(line) > 10:
+                splitted_line = floor(len(line) / 2)
+                add_speech((4, -1.2, 2.2), " ".join(line[:splitted_line]), 0.25, scene.frame_current, scene.frame_current + 120, scene.objects["Main"].location)
+                add_speech((4, -1.2, 1.9), " ".join(line[splitted_line:]), 0.25, scene.frame_current, scene.frame_current + 120, scene.objects["Main"].location)
+            else:
+                add_speech((4, -1.2, 2.2), f, 0.25, scene.frame_current, scene.frame_current + 120, scene.objects["Main"].location)
+                
+            scene.frame_current = scene.frame_current + 120
+        else:
+            pass
+        line_ct += 1
+        time.sleep(3)
+
+    for i in functions["walk"]:
+        object = i[0]
+        start_frame = i[1] 
+        end_frame = i[2] 
+        start_pos = i[3] 
+        end_pos = i[4] 
+        look = i[5]
+        first_move = i[6]
+        print(object, start_frame, end_frame, start_pos, end_pos, look, first_move)
+        move(object, start_frame, end_frame, start_pos, end_pos, look, first_move)
+            
+def run():
+    clear_scene()
+    scene.frame_start = 1
+    scene.frame_current = 1
+    scene.frame_end = 500
+    
+    # implementing the camera object
+    init_camera("Main", (10, 0, 1.5), (90, 0, 90))
+    # implementing the FOG OF DISTANCE object
+    import_object("fog_of_distance.fbx")
+
+    main()
+ 
+run()   
+
+# TODO
+# FIX FRAME EXTRAS E.G: 
+# scene.frame_current = scene.frame_current + 220

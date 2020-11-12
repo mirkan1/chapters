@@ -1,0 +1,14 @@
+include gregg
+include jasper
+
+@JASPER comes from left of the screen/sceen
+
+        JASPER (talk_normal)
+    I see fishies, that made me happy; Does it mean I have a soul?
+        JASPER (talk_normal)
+    Is that all???
+
+@GREGG comes from right of the screen/sceen
+
+        GREGG (talk_normal)
+    Where are the school of fish?
